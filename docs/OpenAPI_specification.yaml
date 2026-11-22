@@ -1,0 +1,2251 @@
+openapi: 3.0.3
+info:
+  title: Flip API
+  version: 0.5.1
+  description: REST API for Flip.
+servers:
+  - url: http://localhost:8080/v1
+    description: Development
+tags:
+  - name: Auth
+  - name: Profile
+  - name: Venues
+  - name: Check-ins
+  - name: Moments
+  - name: Discovery
+  - name: Reactions
+  - name: Matches
+  - name: Chat
+  - name: Notifications
+  - name: Safety
+security:
+  - bearerAuth: []
+paths:
+  /auth/otp/request:
+    post:
+      tags:
+        - Auth
+      summary: Gửi OTP tới số điện thoại
+      description: Yêu cầu gửi mã OTP 6 chữ số; không tiết lộ tài khoản đã tồn tại hay chưa.
+      operationId: requestOtp
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+              properties:
+                phone:
+                  $ref: '#/components/schemas/Phone'
+            example:
+              phone: '+84901234567'
+      responses:
+        '202':
+          description: Hệ thống đã chấp nhận yêu cầu gửi OTP; chưa đảm bảo SMS đã được giao tới điện 
+            thoại
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - expiresAt
+                  - resendAvailableAt
+                properties:
+                  expiresAt:
+                    type: string
+                    format: date-time
+                  resendAvailableAt:
+                    type: string
+                    format: date-time
+                    description: Thời điểm nút "Gửi lại" khả dụng
+              example:
+                expiresAt: '2026-11-18T09:05:00Z'
+                resendAvailableAt: '2026-11-18T09:01:00Z'
+        '422':
+          description: Số điện thoại không hợp lệ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: VALIDATION_ERROR
+                message: Số điện thoại phải đúng định dạng quốc tế E.164.
+                requestId: req_validation_01
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/otp/verify:
+    post:
+      tags:
+        - Auth
+      summary: Xác minh OTP, đăng ký hoặc đăng nhập
+      description: Xác minh mã OTP 6 chữ số; trả 200 khi đăng nhập và 201 khi tạo tài khoản mới. Phiên 
+        được duy trì bằng refresh token rotation và thời gian không hoạt động 14 ngày.
+      operationId: verifyOtp
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - phone
+                - code
+                - deviceId
+              properties:
+                phone:
+                  $ref: '#/components/schemas/Phone'
+                code:
+                  type: string
+                  pattern: ^[0-9]{6}$
+                  description: Mã OTP gồm đúng 6 chữ số.
+                  minLength: 6
+                  maxLength: 6
+                  example: '012345'
+                displayName:
+                  type: string
+                  description: Bắt buộc khi đăng ký mới
+                deviceId:
+                  type: string
+            example:
+              phone: '+84901234567'
+              code: '012345'
+              displayName: Trang 
+              deviceId: 7d1c2f64-91ab-4a52-8e0f-6f3f6a2d9b10
+      responses:
+        '200':
+          description: Đăng nhập tài khoản đã tồn tại.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                accessToken: example-access-token
+                refreshToken: example-refresh-token
+                expiresIn: 900
+                refreshExpiresAt: '2026-12-02T09:00:00Z'
+                user:
+                  id: usr_existing_01
+                  displayName: Nhi
+                  status: active
+                  createdAt: '2026-11-18T09:00:00Z'
+                isNewAccount: false
+
+        '201':
+          description: Đăng ký tài khoản mới thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                accessToken: example-access-token
+                refreshToken: example-refresh-token
+                expiresIn: 900
+                refreshExpiresAt: '2026-12-02T09:00:00Z'
+                user:
+                  id: usr_new_01
+                  displayName: Nhi
+                  status: active
+                  createdAt: '2026-11-18T09:00:00Z'
+                isNewAccount: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          description: Thông tin xác minh OTP không hợp lệ.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              example:
+                code: VALIDATION_ERROR
+                message: OTP phải gồm đúng 6 chữ số.
+                requestId: req_validation_02
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/social:
+    post:
+      tags:
+        - Auth
+      summary: Đăng ký/đăng nhập bằng Apple, Google hoặc Facebook
+      description: Đăng nhập bằng ID token của Apple/Google hoặc access token Facebook đã được xác 
+        minh. Phiên được duy trì bằng refresh token rotation và thời gian không hoạt động 14 ngày.
+      operationId: socialAuth
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required:
+                    - provider
+                    - idToken
+                    - deviceId
+                  additionalProperties: false
+                  properties:
+                    provider:
+                      type: string
+                      enum:
+                        - apple
+                        - google
+                    idToken:
+                      type: string
+                      minLength: 1
+                    deviceId:
+                      type: string
+                      minLength: 1
+                    displayName:
+                      type: string
+                - type: object
+                  required:
+                    - provider
+                    - accessToken
+                    - deviceId
+                  additionalProperties: false
+                  properties:
+                    provider:
+                      type: string
+                      enum:
+                        - facebook
+                    accessToken:
+                      type: string
+                      minLength: 1
+                    deviceId:
+                      type: string
+                      minLength: 1
+                    displayName:
+                      type: string
+            examples:
+              google:
+                value:
+                  provider: google
+                  idToken: <provider-id-token>
+                  deviceId: device-001
+              facebook:
+                value:
+                  provider: facebook
+                  accessToken: <provider-access-token>
+                  deviceId: device-001
+      responses:
+        '200':
+          description: Đăng nhập tài khoản đã tồn tại.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                accessToken: example-access-token
+                refreshToken: example-refresh-token
+                expiresIn: 900
+                refreshExpiresAt: '2026-12-02T09:00:00Z'
+                user:
+                  id: usr_existing_01
+                  displayName: Nhi
+                  status: active
+                  createdAt: '2026-11-18T09:00:00Z'
+                isNewAccount: false
+
+        '201':
+          description: Đăng ký tài khoản mới thành công.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+              example:
+                accessToken: example-access-token
+                refreshToken: example-refresh-token
+                expiresIn: 900
+                refreshExpiresAt: '2026-12-02T09:00:00Z'
+                user:
+                  id: usr_new_01
+                  displayName: Nhi
+                  status: active
+                  createdAt: '2026-11-18T09:00:00Z'
+                isNewAccount: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/refresh:
+    post:
+      tags:
+        - Auth
+      summary: Làm mới access token
+      description: Refresh token rotation. Access token mới có TTL 900 giây; phiên hết hạn sau 14 ngày 
+        không refresh thành công. Mỗi lần refresh thành công gia hạn cửa sổ 14 ngày; không áp dụng thời
+        hạn tuyệt đối cố định khi phiên còn hợp lệ.
+      operationId: refreshToken
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refreshToken
+              properties:
+                refreshToken:
+                  type: string
+                  minLength: 1
+      responses:
+        '200':
+          description: Cặp token mới
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TokenPair'
+              example:
+                accessToken: <access-token>
+                refreshToken: <refresh-token>
+                expiresIn: 900
+                refreshExpiresAt: '2026-12-02T09:00:00Z'
+        '401':
+          description: Refresh token hết hạn, bị thu hồi hoặc không hợp lệ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                expired:
+                  value:
+                    code: REFRESH_TOKEN_EXPIRED
+                    message: Phiên đã hết hạn do không hoạt động trong 14 ngày.
+                    requestId: req_31
+                invalid:
+                  value:
+                    code: REFRESH_TOKEN_INVALID
+                    message: Phiên đăng nhập không hợp lệ.
+                    requestId: req_32
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/logout:
+    post:
+      tags:
+        - Auth
+      summary: Đăng xuất
+      description: Thu hồi đúng phiên ứng với refreshToken, không thu hồi các thiết bị khác. Gọi lặp 
+        khi phiên đã thu hồi vẫn trả 204. Khi offline client xóa phiên cục bộ và đồng bộ việc thu hồi 
+        từ xa khi có kết nối. Không ảnh hưởng Moment, Check-in, Match hoặc Chat.
+      operationId: logout
+      security: []
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                refreshToken:
+                  type: string
+                  description: Cho phép thu hồi cả khi access token đã hết hạn
+                  minLength: 1
+              required:
+                - refreshToken
+        required: true
+      responses:
+        '204':
+          description: Phiên hiện tại đã được thu hồi (hoặc đã thu hồi trước đó); không có body
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /users/me:
+    get:
+      tags:
+        - Profile
+      summary: Lấy hồ sơ của tôi
+      operationId: getMe
+      responses:
+        '200':
+          description: Hồ sơ
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      description: Trả hồ sơ tài khoản đã xác thực.
+    patch:
+      tags:
+        - Profile
+      summary: Cập nhật hồ sơ (thiết lập ban đầu hoặc chỉnh sửa)
+      description: Cập nhật hồ sơ nguyên tử; lỗi dữ liệu hoặc tải avatar không ghi đè một phần.
+      operationId: updateMe
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateProfile'
+            example:
+              displayName: Nhi
+              bio: Thích cà phê đen và sách cũ
+              interests:
+                - cà phê
+                - sách
+                - chụp ảnh
+          multipart/form-data:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/UpdateProfile'
+                - type: object
+                  properties:
+                    avatar:
+                      type: string
+                      format: binary
+                      description: Ảnh đại diện JPEG, PNG hoặc WebP.
+      responses:
+        '200':
+          description: Hồ sơ sau cập nhật
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Me'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /venues:
+    get:
+      tags:
+        - Venues
+      summary: Liệt kê địa điểm trong bán kính 150 m
+      description: Yêu cầu vị trí hiện tại (latitude, longitude, accuracy); chỉ trả địa điểm có khoảng 
+        cách từ GPS đến tọa độ địa điểm không quá 150 m. q chỉ lọc trong phạm vi này. Không thể chọn 
+        địa điểm ngoài bán kính.
+      operationId: listVenues
+      parameters:
+        - name: latitude
+          in: query
+          schema:
+            type: number
+            minimum: -90
+            maximum: 90
+          example: 10.7731
+          required: true
+        - name: longitude
+          in: query
+          schema:
+            type: number
+            minimum: -180
+            maximum: 180
+          example: 106.6606
+          required: true
+        - name: accuracy
+          in: query
+          description: Độ chính xác GPS hiện tại do thiết bị báo cáo (mét).
+          schema:
+            type: number
+            minimum: 0
+          required: true
+        - name: q
+          in: query
+          description: 'Tùy chọn: lọc tên các địa điểm nằm trong bán kính 150 m.'
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Các địa điểm cách vị trí hiện tại không quá 150 m (có thể rỗng).
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - page
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/VenueSuggestion'
+                  page:
+                    $ref: '#/components/schemas/PageInfo'
+              example:
+                data:
+                  - venue:
+                      id: ven_01HZX3K9
+                      name: Highlands Coffee – Thư viện Tạ Quang Bửu
+                      category: cafe
+                    isCurrent: false
+                    distanceMeters: 73.4
+                page:
+                  limit: 20
+                  hasMore: false
+                  nextCursor:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /checkins/current:
+    get:
+      tags:
+        - Check-ins
+      summary: Trạng thái check-in hiện tại
+      description: Trả check-in được giữ lại kể cả khi Moment hết hạn/bị xóa (activeMomentCount = 0). 
+        checkin = null nếu chưa từng check-in hoặc đã chủ động hủy.
+      operationId: getCheckinStatus
+      responses:
+        '200':
+          description: Trạng thái
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CheckinStatus'
+              examples:
+                active:
+                  value:
+                    checkin:
+                      id: chk_01HZX4A2
+                      venue:
+                        id: ven_01HZX3K9
+                        name: Highlands Coffee – Thư viện Tạ Quang Bửu
+                        category: cafe
+                      startedAt: '2026-11-18T09:15:00Z'
+                      activeMomentCount: 1
+                    restricted: false
+                    canDiscover: true
+                none:
+                  value:
+                    checkin:
+                    restricted: false
+                    canDiscover: false
+                idle:
+                  value:
+                    checkin:
+                      id: chk_01HZX4A2
+                      venue:
+                        id: ven_01HZX3K9
+                        name: Highlands Coffee – Thư viện Tạ Quang Bửu
+                        category: cafe
+                      startedAt: '2026-11-18T09:15:00Z'
+                      activeMomentCount: 0
+                    restricted: false
+                    canDiscover: false
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    delete:
+      tags:
+        - Check-ins
+      summary: Hủy check-in hiện tại
+      description: Chủ động kết thúc check-in, gỡ Moment còn hiệu lực và vô hiệu Like đang chờ. Match 
+        và Chat đã tạo được giữ.
+      operationId: cancelCheckin
+      responses:
+        '204':
+          description: Check-in đã kết thúc
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /checkins/current/moments:
+    get:
+      tags:
+        - Check-ins
+      summary: Moment đang hiệu lực của tôi
+      description: Trả 0 hoặc 1 Moment đang hiệu lực; khi check-in được giữ nhưng không có Moment thì 
+        data = [].
+      operationId: listCurrentMoments
+      responses:
+        '200':
+          description: Danh sách có 0 hoặc 1 Moment còn hiệu lực.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/MyMoment'
+                    maxItems: 1
+              example:
+                data:
+                  - id: mom_01HZX4A3
+                    photoUrl: https://cdn.flip.example.com/moments/mom_01HZX4A3.jpg
+                    caption: Cà phê đen và deadline
+                    venue:
+                      id: ven_01HZX3K9
+                      name: Highlands Coffee – Thư viện Tạ Quang Bửu
+                      category: cafe
+                    publishedAt: '2026-11-18T09:15:00Z'
+                    expiresAt: '2026-11-18T11:15:00Z'
+                    status: active
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /moments:
+    post:
+      tags:
+        - Moments
+      summary: Đăng Moment
+      description: Mỗi tài khoản tối đa một Moment còn hiệu lực. Đăng thành công tạo check-in mới hoặc 
+        dùng lại check-in tại cùng địa điểm. Khi Moment hết hạn sau 2 giờ hoặc bị xóa, check-in vẫn 
+        được giữ nhưng Discovery tạm ngừng và Like chưa Match hết hiệu lực. Đăng tại địa điểm khác cần 
+        xác nhận; chỉ khi đăng thành công mới kết thúc check-in cũ. Địa điểm phải nằm trong bán kính 
+        150 m tính từ GPS hiện tại; server xác minh lại khi đăng. Replay đúng Idempotency-Key không tạo
+        Moment trùng.
+      operationId: createMoment
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - photo
+                - venueId
+                - latitude
+                - longitude
+                - accuracy
+              properties:
+                photo:
+                  type: string
+                  format: binary
+                  description: Ảnh JPEG, PNG hoặc WebP.
+                venueId:
+                  type: string
+                  description: Địa điểm đã chọn từ /venues, cách vị trí GPS hiện tại không quá 150 m.
+                caption:
+                  type: string
+                  maxLength: 50
+                  description: Tùy chọn. Client chặn ký tự thứ 51; server vẫn kiểm tra.
+                latitude:
+                  type: number
+                  minimum: -90
+                  maximum: 90
+                longitude:
+                  type: number
+                  minimum: -180
+                  maximum: 180
+                accuracy:
+                  type: number
+                  minimum: 0
+                  description: Bắt buộc trong POST; độ chính xác tính bằng mét do hệ điều hành trả về; 
+                    server đối chiếu ngưỡng cấu hình (chưa xác định).
+                confirmVenueSwitch:
+                  type: boolean
+                  default: false
+                  description: true khi người dùng đã xác nhận đổi địa điểm. Nếu gửi lại sau lỗi xác 
+                    nhận 409 với payload thay đổi, client dùng Idempotency-Key mới.
+            encoding:
+              photo:
+                contentType: image/jpeg, image/png, image/webp
+      responses:
+        '201':
+          description: Moment được công bố; check-in được tạo hoặc cập nhật.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateMomentResponse'
+              example:
+                checkin:
+                  id: chk_01HZX4A2
+                  venue:
+                    id: ven_01HZX3K9
+                    name: Highlands Coffee – Thư viện Tạ Quang Bửu
+                    category: cafe
+                  startedAt: '2026-11-18T09:15:00Z'
+                  activeMomentCount: 1
+                moment:
+                  id: mom_01HZX4A3
+                  photoUrl: https://cdn.flip.example.com/moments/mom_01HZX4A3.jpg
+                  caption: Cà phê đen và deadline
+                  venue:
+                    id: ven_01HZX3K9
+                    name: Highlands Coffee – Thư viện Tạ Quang Bửu
+                    category: cafe
+                  publishedAt: '2026-11-18T09:15:00Z'
+                  expiresAt: '2026-11-18T11:15:00Z'
+                  status: active
+          headers:
+            Idempotent-Replayed:
+              description: Chỉ có khi replay đúng request đã hoàn tất bằng cùng Idempotency-Key; true 
+                nghĩa là response cũ được trả lại, không thực thi thêm.
+              schema:
+                type: boolean
+              example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          description: Moment đang có hiệu lực, đổi địa điểm chưa xác nhận hoặc xung đột idempotency.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                activeMoment:
+                  value:
+                    code: ACTIVE_MOMENT_EXISTS
+                    message: Hãy chờ Moment hiện tại hết hạn hoặc xóa nó trước khi đăng mới.
+                    requestId: req_25
+                idempotencyInProgress:
+                  value:
+                    code: IDEMPOTENCY_IN_PROGRESS
+                    message: Yêu cầu này đang được xử lý.
+                    requestId: req_22
+                idempotencyKeyReused:
+                  value:
+                    code: IDEMPOTENCY_KEY_REUSED
+                    message: Idempotency-Key đã được sử dụng cho nội dung khác.
+                    requestId: req_24
+                venueSwitch:
+                  value:
+                    code: VENUE_SWITCH_CONFIRMATION_REQUIRED
+                    message: Đăng tại địa điểm mới sẽ kết thúc check-in cũ. Hãy xác nhận để tiếp tục.
+                    requestId: req_33
+        '413':
+          $ref: '#/components/responses/PayloadTooLarge'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType'
+        '422':
+          description: Dữ liệu không hợp lệ hoặc địa điểm vượt bán kính 150 m.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                venueOutOfRange:
+                  value:
+                    code: VENUE_OUT_OF_RANGE
+                    message: Địa điểm phải nằm trong bán kính 150 m từ vị trí hiện tại.
+                    requestId: req_26
+                invalidLocation:
+                  value:
+                    code: LOCATION_ACCURACY_INSUFFICIENT
+                    message: Vị trí chưa đủ chính xác để xác minh.
+                    requestId: req_27
+                invalidCaption:
+                  value:
+                    code: CAPTION_TOO_LONG
+                    message: Caption tối đa 50 ký tự.
+                    requestId: req_28
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /moments/{momentId}:
+    delete:
+      tags:
+        - Moments
+      summary: Xóa một Moment của tôi
+      description: Xóa Moment của chính mình; check-in vẫn được giữ với activeMomentCount = 0. Người 
+        dùng có thể đăng Moment mới ngay. Like chưa Match hết hiệu lực; Match/Chat được giữ.
+      operationId: deleteMoment
+      parameters:
+        - $ref: '#/components/parameters/MomentId'
+      responses:
+        '200':
+          description: Moment đã được gỡ; trạng thái check-in hiện tại.
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - checkin
+                properties:
+                  checkin:
+                    $ref: '#/components/schemas/Checkin'
+              example:
+                checkin:
+                  id: chk_01HZX4A2
+                  venue:
+                    id: ven_01HZX3K9
+                    name: Highlands Coffee – Thư viện Tạ Quang Bửu
+                    category: cafe
+                  startedAt: '2026-11-18T09:15:00Z'
+                  activeMomentCount: 0
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /discovery/deck:
+    get:
+      tags:
+        - Discovery
+      summary: Lấy Discovery Deck ẩn danh
+      description: Chỉ dành cho tài khoản có check-in với một Moment đang hiệu lực và không bị hạn chế.
+        Chỉ trả Moment còn hạn của người khác tại cùng địa điểm; lọc Like/Pass/Report đã xử lý và 
+        Block. Không tiết lộ danh tính hoặc vị trí chi tiết. Không có thẻ trả 200 data = []; không đủ 
+        điều kiện trả 403.
+      operationId: getDiscoveryDeck
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Trang Card
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeckPage'
+              examples:
+                hasCards:
+                  value:
+                    data:
+                      - id: mom_01HZX5B1
+                        photoUrl: https://cdn.flip.example.com/moments/mom_01HZX5B1.jpg
+                        caption: Mưa rồi mà vẫn ra quán
+                        venue:
+                          id: ven_01HZX3K9
+                          name: Highlands Coffee – Thư viện Tạ Quang Bửu
+                          category: cafe
+                        publishedAt: '2026-11-18T09:40:00Z'
+                        expiresAt: '2026-11-18T11:40:00Z'
+                    page:
+                      limit: 20
+                      hasMore: false
+                      nextCursor:
+                emptyDeck:
+                  value:
+                    data: []
+                    page:
+                      limit: 20
+                      hasMore: false
+                      nextCursor:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Chưa check-in, không còn Moment hợp lệ, hoặc tài khoản bị hạn chế
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+              examples:
+                noCheckin:
+                  value:
+                    code: CHECKIN_REQUIRED
+                    message: Hãy đăng một khoảnh khắc tại địa điểm để bắt đầu khám phá.
+                    requestId: req_2a91
+                restricted:
+                  value:
+                    code: ACCOUNT_RESTRICTED
+                    message: Tài khoản của bạn bị hạn chế đến hết thời gian pilot.
+                    requestId: req_2a92
+                noActiveMoment:
+                  value:
+                    code: ACTIVE_MOMENT_REQUIRED
+                    message: Hãy đăng Moment mới để tiếp tục khám phá.
+                    requestId: req_34
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /moments/{momentId}/reactions:
+    post:
+      tags:
+        - Reactions
+      summary: Like hoặc Pass một Moment
+      description: Like hướng tới tài khoản trong cặp check-in và chỉ được tạo khi hai bên đang có 
+        Moment hợp lệ tại cùng địa điểm. Hai Like đối ứng hợp lệ tạo một Match duy nhất. Like chưa 
+        thành Match hết hiệu lực khi Moment của một bên hết hạn, bị xóa/ẩn hoặc check-in bị hủy; không 
+        hồi sinh khi đăng lại. Pass chỉ áp dụng cho Moment đích.
+      operationId: reactToMoment
+      parameters:
+        - $ref: '#/components/parameters/MomentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - type
+              properties:
+                type:
+                  type: string
+                  enum:
+                    - like
+                    - pass
+            examples:
+              like:
+                value:
+                  type: like
+              pass:
+                value:
+                  type: pass
+      responses:
+        '200':
+          description: Trạng thái hiện có được giữ nguyên (gọi lặp, hoặc đã Like/Match/Report)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReactionResult'
+              examples:
+                alreadyReported:
+                  value:
+                    type: pass
+                    matched: false
+                    actionApplied: false
+                    currentState: reported
+                    match:
+                alreadyPassed:
+                  value:
+                    type: pass
+                    matched: false
+                    actionApplied: false
+                    currentState: passed
+                    match:
+          headers:
+            Idempotent-Replayed:
+              description: Chỉ có khi replay đúng request đã hoàn tất bằng cùng Idempotency-Key; true 
+                nghĩa là response cũ được trả lại, không thực thi thêm.
+              schema:
+                type: boolean
+              example: true
+        '201':
+          description: Reaction được ghi nhận
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReactionResult'
+              examples:
+                pendingLike:
+                  summary: Like chờ đối ứng
+                  value:
+                    type: like
+                    matched: false
+                    match:
+                    currentState: liked
+                    actionApplied: true
+                mutual:
+                  summary: Like thứ hai tạo Match
+                  value:
+                    type: like
+                    matched: true
+                    match:
+                      id: mat_01HZX6C7
+                      createdAt: '2026-11-18T09:52:10Z'
+                      partner:
+                        userId: usr_01HZW9Q2
+                        displayName: Khả Vân
+                        avatarUrl: https://cdn.flip.example.com/avatars/usr_01HZW9Q2.jpg
+                        bio: Sinh viên Bách Khoa
+                        interests:
+                          - cà phê
+                          - nhiếp ảnh
+                      lastMessage:
+                    currentState: matched
+                    actionApplied: true
+                pass:
+                  value:
+                    type: pass
+                    matched: false
+                    match:
+                    currentState: passed
+                    actionApplied: true
+          headers:
+            Idempotent-Replayed:
+              description: Chỉ có khi replay đúng request đã hoàn tất bằng cùng Idempotency-Key; true 
+                nghĩa là response cũ được trả lại, không thực thi thêm.
+              schema:
+                type: boolean
+              example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /moments/{momentId}/reports:
+    post:
+      tags:
+        - Safety
+      summary: Báo cáo một Moment
+      description: Báo cáo một Moment có thể truy cập; mỗi người chỉ được tính một lần. Hai người khác 
+        nhau đủ điều kiện cùng địa điểm báo cáo khiến Moment bị ẩn và tính một vi phạm. Ba Moment vi 
+        phạm dẫn tới hạn chế tài khoản đến hết pilot; đóng quyền đăng/check-in/Discovery, nhưng giữ 
+        Match/Chat hiện có.
+      operationId: reportMoment
+      parameters:
+        - $ref: '#/components/parameters/MomentId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  enum:
+                    - inappropriate
+                    - harassment
+                    - spam
+                  description: Nội dung không phù hợp / quấy rối, thiếu tôn trọng / spam, quảng cáo
+            example:
+              reason: spam
+      responses:
+        '200':
+          description: Report trùng, không thay đổi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportReceipt'
+          headers:
+            Idempotent-Replayed:
+              description: Chỉ có khi replay đúng request đã hoàn tất bằng cùng Idempotency-Key; true 
+                nghĩa là response cũ được trả lại, không thực thi thêm.
+              schema:
+                type: boolean
+              example: true
+        '201':
+          description: Đã ghi nhận
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportReceipt'
+          headers:
+            Idempotent-Replayed:
+              description: Chỉ có khi replay đúng request đã hoàn tất bằng cùng Idempotency-Key; true 
+                nghĩa là response cũ được trả lại, không thực thi thêm.
+              schema:
+                type: boolean
+              example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /matches:
+    get:
+      tags:
+        - Matches
+      summary: Danh sách kết nối đang hoạt động
+      description: Liệt kê các Match đang hoạt động theo mức độ hoạt động gần nhất.
+      operationId: listMatches
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Trang kết nối
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MatchPage'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /matches/{matchId}:
+    parameters:
+      - $ref: '#/components/parameters/MatchId'
+    get:
+      tags:
+        - Matches
+      summary: Chi tiết một kết nối
+      operationId: getMatch
+      responses:
+        '200':
+          description: Kết nối
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Match'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+      description: Lấy chi tiết Match đang hoạt động của người tham gia đã xác thực.
+    delete:
+      tags:
+        - Safety
+      summary: Kết thúc kết nối (Unmatch)
+      description: Unmatch chấm dứt kết nối và quyền Chat/hồ sơ qua kết nối đó cho cả hai bên. Không tự
+        tạo Block hoặc tự khôi phục Match. Chính sách Match lại sau Unmatch chưa được chốt.
+      operationId: unmatch
+      responses:
+        '204':
+          description: Đã kết thúc kết nối
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /matches/{matchId}/messages:
+    parameters:
+      - $ref: '#/components/parameters/MatchId'
+    get:
+      tags:
+        - Chat
+      summary: Lấy tin nhắn
+      description: Lấy tin nhắn của Match đang hoạt động, mới nhất trước; hết hạn Moment/check-in không
+        kết thúc Chat.
+      operationId: listMessages
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Trang tin nhắn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessagePage'
+              example:
+                data:
+                  - id: msg_01HZX7D1
+                    matchId: mat_01HZX6C7
+                    senderId: usr_01HZW9Q2
+                    content: Hi, cà phê đen có ngon không?
+                    createdAt: '2026-11-18T09:55:03Z'
+                page:
+                  limit: 20
+                  hasMore: false
+                  nextCursor:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+    post:
+      tags:
+        - Chat
+      summary: Gửi tin nhắn
+      description: Chỉ gửi khi Match đang hoạt động; tin nhắn phải có nội dung không rỗng. Retry cùng 
+        Idempotency-Key không tạo tin trùng. Không đặt giới hạn ký tự tối đa cho tin nhắn theo nghiệp vụ.
+      operationId: sendMessage
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKeyRequired'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - content
+              properties:
+                content:
+                  type: string
+                  minLength: 1
+                  description: Bắt buộc có nội dung không rỗng; không giới hạn số ký tự theo nghiệp vụ.
+                  pattern: '\S'
+            example:
+              content: Hi, cà phê đen có ngon không?
+      responses:
+        '201':
+          description: Tin nhắn đã gửi
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Message'
+          headers:
+            Idempotent-Replayed:
+              description: Chỉ có khi replay đúng request đã hoàn tất bằng cùng Idempotency-Key; true 
+                nghĩa là response cũ được trả lại, không thực thi thêm.
+              schema:
+                type: boolean
+              example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /matches/{matchId}/reports:
+    post:
+      tags:
+        - Safety
+      summary: Báo cáo người dùng trong Chat
+      description: Báo cáo người dùng trong Chat mà không tự Block, Unmatch hoặc cộng vi phạm Moment.
+      operationId: reportUserInChat
+      parameters:
+        - $ref: '#/components/parameters/MatchId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - reason
+              properties:
+                reason:
+                  type: string
+                  enum:
+                    - harassment
+                    - inappropriate
+                    - fake_or_spam
+            example:
+              reason: harassment
+      responses:
+        '201':
+          description: Đã ghi nhận
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReportReceipt'
+          headers:
+            Idempotent-Replayed:
+              description: Chỉ có khi replay đúng request đã hoàn tất bằng cùng Idempotency-Key; true 
+                nghĩa là response cũ được trả lại, không thực thi thêm.
+              schema:
+                type: boolean
+              example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /notifications:
+    get:
+      tags:
+        - Notifications
+      summary: Danh sách thông báo trong ứng dụng
+      description: Liệt kê thông báo trong ứng dụng; Pass không tạo thông báo và không lộ danh tính 
+        trước Match.
+      operationId: listNotifications
+      parameters:
+        - $ref: '#/components/parameters/Limit'
+        - $ref: '#/components/parameters/Cursor'
+      responses:
+        '200':
+          description: Trang thông báo
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationPage'
+              example:
+                data:
+                  - id: ntf_01HZX8E4
+                    type: like
+                    createdAt: '2026-11-18T09:50:00Z'
+                    readAt:
+                    text: Có người quan tâm bạn
+                page:
+                  limit: 20
+                  hasMore: false
+                  nextCursor:
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /notifications/{notificationId}/open:
+    post:
+      tags:
+        - Notifications
+      summary: Mở nội dung đích của thông báo
+      description: Kiểm tra lại quyền đối với nội dung đích, đánh dấu đã đọc và trả mục điều hướng; 
+        đích không còn hiệu lực trả 410.
+      operationId: openNotification
+      parameters:
+        - name: notificationId
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Đích để điều hướng
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/NotificationTarget'
+              examples:
+                like:
+                  value:
+                    kind: moment
+                    moment:
+                      id: mom_01HZX5B7
+                      photoUrl: https://cdn.flip.example.com/moments/mom_01HZX5B7.jpg
+                      caption:
+                      venue:
+                        id: ven_01HZX3K9
+                        name: Highlands Coffee – Thư viện Tạ Quang Bửu
+                        category: cafe
+                      publishedAt: '2026-11-18T09:58:00Z'
+                      expiresAt: '2026-11-18T11:58:00Z'
+                chat:
+                  value:
+                    kind: chat
+                    matchId: mat_01HZX6C7
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '410':
+          $ref: '#/components/responses/Gone'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /blocks:
+    post:
+      tags:
+        - Safety
+      summary: Chặn người dùng
+      description: Chặn đối phương từ Match hoặc Moment đang được xem trong Discovery. Server chỉ chấp 
+        nhận momentId còn được người gọi truy cập trong Discovery; không tiết lộ userId trước Match. 
+        Block đóng kết nối và cấm Discovery, Like, Match, Chat giữa hai tài khoản, bao gồm các check-in
+        về sau. Chưa có Unblock trong MVP.
+      operationId: blockUser
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              oneOf:
+                - type: object
+                  required:
+                    - matchId
+                  additionalProperties: false
+                  properties:
+                    matchId:
+                      type: string
+                      minLength: 1
+                - type: object
+                  required:
+                    - momentId
+                  additionalProperties: false
+                  properties:
+                    momentId:
+                      type: string
+                      minLength: 1
+            examples:
+              fromMatch:
+                value:
+                  matchId: mat_01HZX6C7
+              fromDiscovery:
+                value:
+                  momentId: mom_01HZX5B1
+      responses:
+        '200':
+          description: Đã chặn từ trước
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockReceipt'
+          headers:
+            Idempotent-Replayed:
+              description: Chỉ có khi replay đúng request đã hoàn tất bằng cùng Idempotency-Key; true 
+                nghĩa là response cũ được trả lại, không thực thi thêm.
+              schema:
+                type: boolean
+              example: true
+        '201':
+          description: Đã chặn
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BlockReceipt'
+          headers:
+            Idempotent-Replayed:
+              description: Chỉ có khi replay đúng request đã hoàn tất bằng cùng Idempotency-Key; true 
+                nghĩa là response cũ được trả lại, không thực thi thêm.
+              schema:
+                type: boolean
+              example: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/IdempotencyConflict'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '403':
+          $ref: '#/components/responses/Forbidden'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: "`Authorization: Bearer <accessToken>`. Hết hạn → `401 TOKEN_EXPIRED`; client gọi `/auth/refresh`
+        rồi thử lại.\n"
+  parameters:
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+    Cursor:
+      name: cursor
+      in: query
+      description: Con trỏ opaque lấy từ `page.nextCursor`
+      schema:
+        type: string
+    MomentId:
+      name: momentId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: mom_01HZX5B1
+    MatchId:
+      name: matchId
+      in: path
+      required: true
+      schema:
+        type: string
+      example: mat_01HZX6C7
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: false
+      description: Giữ cùng UUID khi gửi lại cùng một thao tác.
+      schema:
+        type: string
+        format: uuid
+    IdempotencyKeyRequired:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: Giữ cùng UUID khi gửi lại cùng một thao tác.
+      schema:
+        type: string
+        format: uuid
+  responses:
+    Unauthorized:
+      description: Thiếu hoặc sai thông tin xác thực
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            otpInvalid:
+              value:
+                code: OTP_INVALID
+                message: Mã OTP không đúng.
+                requestId: req_01
+            otpExpired:
+              value:
+                code: OTP_EXPIRED
+                message: Mã OTP đã hết hạn. Hãy gửi lại mã.
+                requestId: req_02
+            tokenExpired:
+              value:
+                code: TOKEN_EXPIRED
+                message: Access token đã hết hạn.
+                requestId: req_03
+            unauthenticated:
+              value:
+                code: UNAUTHENTICATED
+                message: Cần đăng nhập để tiếp tục.
+                requestId: req_04
+            refreshTokenInvalid:
+              value:
+                code: REFRESH_TOKEN_INVALID
+                message: Phiên đăng nhập không hợp lệ.
+                requestId: req_25
+    Forbidden:
+      description: Đã xác thực nhưng không được phép
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            restricted:
+              value:
+                code: ACCOUNT_RESTRICTED
+                message: Tài khoản của bạn bị hạn chế đến hết thời gian pilot.
+                requestId: req_05
+            checkinRequired:
+              value:
+                code: CHECKIN_REQUIRED
+                message: Bạn cần có check-in hợp lệ tại địa điểm này.
+                requestId: req_06
+            connectionClosed:
+              value:
+                code: CONNECTION_CLOSED
+                message: Kết nối này đã kết thúc.
+                requestId: req_07
+            momentRequired:
+              value:
+                code: ACTIVE_MOMENT_REQUIRED
+                message: Bạn cần đăng Moment còn hạn để khám phá.
+                requestId: req_34
+    NotFound:
+      description: Không tìm thấy (hoặc không có quyền biết là có tồn tại)
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: NOT_FOUND
+            message: Không tìm thấy tài nguyên.
+            requestId: req_08
+    Gone:
+      description: Nội dung/đích không còn khả dụng
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            momentUnavailable:
+              value:
+                code: MOMENT_UNAVAILABLE
+                message: Khoảnh khắc này không còn khả dụng.
+                requestId: req_09
+            targetUnavailable:
+              value:
+                code: TARGET_UNAVAILABLE
+                message: Nội dung của thông báo này không còn khả dụng.
+                requestId: req_10
+    ValidationError:
+      description: Dữ liệu không hợp lệ hoặc vi phạm quy tắc nghiệp vụ.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            captionTooLong:
+              value:
+                code: CAPTION_TOO_LONG
+                message: Caption tối đa 50 ký tự.
+                requestId: req_12
+            photoRequired:
+              value:
+                code: PHOTO_REQUIRED
+                message: Cần có ảnh để đăng khoảnh khắc.
+                requestId: req_13
+            locationUnavailable:
+              value:
+                code: LOCATION_UNAVAILABLE
+                message: Không lấy được vị trí. Ảnh không được đăng.
+                requestId: req_14
+            accuracy:
+              value:
+                code: LOCATION_ACCURACY_INSUFFICIENT
+                message: Vị trí chưa đủ chính xác. Hãy thử lại.
+                requestId: req_15
+            validation:
+              value:
+                code: VALIDATION_ERROR
+                message: Dữ liệu không hợp lệ.
+                details:
+                  - field: phone
+                    issue: sai định dạng
+                requestId: req_17
+            venueOutOfRange:
+              value:
+                code: VENUE_OUT_OF_RANGE
+                message: Địa điểm ngoài bán kính 150 m.
+                requestId: req_26
+    PayloadTooLarge:
+      description: File vượt giới hạn dung lượng do hệ thống cấu hình.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: PAYLOAD_TOO_LARGE
+            message: File vượt giới hạn dung lượng được cho phép.
+            requestId: req_18
+    UnsupportedMediaType:
+      description: Định dạng ảnh không hỗ trợ
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: UNSUPPORTED_MEDIA_TYPE
+            message: Chỉ hỗ trợ JPEG, PNG, WebP.
+            requestId: req_19
+    TooManyRequests:
+      description: Vượt giới hạn tần suất
+      headers:
+        Retry-After:
+          description: Số giây cần chờ
+          schema:
+            type: integer
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: RATE_LIMITED
+            message: Bạn thao tác quá nhanh, vui lòng thử lại sau.
+            requestId: req_20
+    InternalError:
+      description: Lỗi máy chủ.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          example:
+            code: INTERNAL_ERROR
+            message: Đã có lỗi xảy ra. Vui lòng thử lại.
+            requestId: req_21
+    IdempotencyConflict:
+      description: Khóa yêu cầu đang xử lý hoặc đã được dùng cho nội dung khác.
+      headers:
+        Retry-After:
+          description: Chỉ có khi IDEMPOTENCY_IN_PROGRESS; số giây cần chờ.
+          schema:
+            type: integer
+            minimum: 1
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+          examples:
+            inProgress:
+              value:
+                code: IDEMPOTENCY_IN_PROGRESS
+                message: Yêu cầu này đang được xử lý.
+                requestId: req_22
+            keyReused:
+              value:
+                code: IDEMPOTENCY_KEY_REUSED
+                message: Idempotency-Key đã được dùng cho payload khác.
+                requestId: req_24
+  schemas:
+    Error:
+      type: object
+      required:
+        - code
+        - message
+        - requestId
+      properties:
+        code:
+          type: string
+          enum:
+            - VALIDATION_ERROR
+            - PHOTO_REQUIRED
+            - CAPTION_TOO_LONG
+            - LOCATION_UNAVAILABLE
+            - LOCATION_ACCURACY_INSUFFICIENT
+            - UNAUTHENTICATED
+            - TOKEN_EXPIRED
+            - OTP_INVALID
+            - OTP_EXPIRED
+            - ACCOUNT_RESTRICTED
+            - CHECKIN_REQUIRED
+            - CONNECTION_CLOSED
+            - NOT_FOUND
+            - MOMENT_UNAVAILABLE
+            - TARGET_UNAVAILABLE
+            - PAYLOAD_TOO_LARGE
+            - UNSUPPORTED_MEDIA_TYPE
+            - RATE_LIMITED
+            - IDEMPOTENCY_IN_PROGRESS
+            - INTERNAL_ERROR
+            - IDEMPOTENCY_KEY_REUSED
+            - REFRESH_TOKEN_INVALID
+            - ACTIVE_MOMENT_EXISTS
+            - VENUE_OUT_OF_RANGE
+            - REFRESH_TOKEN_EXPIRED
+            - VENUE_SWITCH_CONFIRMATION_REQUIRED
+            - ACTIVE_MOMENT_REQUIRED
+        message:
+          type: string
+          description: Thông điệp hiển thị được cho người dùng
+        details:
+          type: array
+          items:
+            type: object
+            properties:
+              field:
+                type: string
+              issue:
+                type: string
+        meta:
+          type: object
+          additionalProperties: true
+          description: Dữ liệu có cấu trúc kèm theo (ví dụ cảnh báo chuyển địa điểm)
+        requestId:
+          type: string
+    PageInfo:
+      type: object
+      required:
+        - limit
+        - hasMore
+        - nextCursor
+      properties:
+        limit:
+          type: integer
+        hasMore:
+          type: boolean
+        nextCursor:
+          type: string
+          nullable: true
+    Phone:
+      type: string
+      description: Số điện thoại quốc tế định dạng E.164.
+      pattern: ^\+[1-9][0-9]{7,14}$
+      example: '+84901234567'
+    TokenPair:
+      type: object
+      required:
+        - accessToken
+        - refreshToken
+        - expiresIn
+        - refreshExpiresAt
+      properties:
+        accessToken:
+          type: string
+        refreshToken:
+          type: string
+        expiresIn:
+          type: integer
+          description: Thời gian hiệu lực access token, tính bằng giây.
+          example: 900
+          enum:
+            - 900
+        refreshExpiresAt:
+          type: string
+          format: date-time
+          description: Thời điểm phiên hết hạn nếu không refresh thành công thêm; được gia hạn 14 ngày 
+            mỗi lần refresh.
+      example:
+        accessToken: <access-token>
+        refreshToken: <refresh-token>
+        expiresIn: 900
+        refreshExpiresAt: '2026-12-02T09:00:00Z'
+    AuthResponse:
+      allOf:
+        - $ref: '#/components/schemas/TokenPair'
+        - type: object
+          required:
+            - user
+            - isNewAccount
+          properties:
+            user:
+              $ref: '#/components/schemas/Me'
+            isNewAccount:
+              type: boolean
+              description: '`true` thì client mở UC-16 (Thiết lập hồ sơ ban đầu)'
+    UpdateProfile:
+      type: object
+      properties:
+        displayName:
+          type: string
+        bio:
+          type: string
+          nullable: true
+        interests:
+          type: array
+          items:
+            type: string
+    Me:
+      type: object
+      required:
+        - id
+        - displayName
+        - status
+        - createdAt
+      properties:
+        id:
+          type: string
+          example: usr_01HZW8AA
+        phone:
+          $ref: '#/components/schemas/Phone'
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        interests:
+          type: array
+          items:
+            type: string
+        status:
+          type: string
+          enum:
+            - active
+            - restricted
+          description: Hoạt động hoặc bị hạn chế đến hết pilot.
+        createdAt:
+          type: string
+          format: date-time
+      example:
+        id: usr_01HZW8AA
+        displayName: Nhi
+        avatarUrl:
+        bio: Thích cà phê và đọc sách
+        interests:
+          - cà phê
+          - đọc sách
+        status: active
+        createdAt: '2026-11-18T09:00:00Z'
+    Partner:
+      type: object
+      description: Hồ sơ chỉ được xem sau khi Match.
+      required:
+        - userId
+        - displayName
+      properties:
+        userId:
+          type: string
+        displayName:
+          type: string
+        avatarUrl:
+          type: string
+          format: uri
+          nullable: true
+        bio:
+          type: string
+          nullable: true
+        interests:
+          type: array
+          items:
+            type: string
+    Venue:
+      type: object
+      required:
+        - id
+        - name
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+          description: Loại địa điểm.
+          enum:
+            - cafe
+            - library
+            - canteen
+            - campus
+            - other
+    VenueSuggestion:
+      type: object
+      required:
+        - venue
+        - distanceMeters
+      properties:
+        venue:
+          $ref: '#/components/schemas/Venue'
+        isCurrent:
+          type: boolean
+          description: '`true` nếu là địa điểm của check-in hiện tại'
+        distanceMeters:
+          type: number
+          minimum: 0
+          maximum: 150
+          description: Khoảng cách từ vị trí GPS hiện tại đến địa điểm, tính bằng mét.
+    Checkin:
+      type: object
+      description: Check-in được lưu cho đến khi người dùng hủy hoặc chuyển sang địa điểm khác bằng một
+        lần đăng Moment thành công. Có thể chưa có Moment hiệu lực.
+      required:
+        - id
+        - venue
+        - startedAt
+        - activeMomentCount
+      properties:
+        id:
+          type: string
+        venue:
+          $ref: '#/components/schemas/Venue'
+        startedAt:
+          type: string
+          format: date-time
+          description: Mốc bắt đầu từ lần đăng đầu tiên
+        activeMomentCount:
+          type: integer
+          minimum: 0
+          maximum: 1
+          description: 0 khi Moment đã hết hạn hoặc bị xóa; 1 khi có Moment hiệu lực.
+    CheckinStatus:
+      type: object
+      required:
+        - checkin
+        - restricted
+        - canDiscover
+      properties:
+        checkin:
+          oneOf:
+            - $ref: '#/components/schemas/Checkin'
+            - type: object
+              nullable: true
+              enum:
+                - 
+        restricted:
+          type: boolean
+        canDiscover:
+          type: boolean
+          description: Chỉ true khi check-in có một Moment còn hạn và tài khoản không bị hạn chế.
+    MyMoment:
+      type: object
+      required:
+        - id
+        - photoUrl
+        - venue
+        - publishedAt
+        - expiresAt
+        - status
+      properties:
+        id:
+          type: string
+        photoUrl:
+          type: string
+          format: uri
+        caption:
+          type: string
+          maxLength: 50
+          nullable: true
+        venue:
+          $ref: '#/components/schemas/Venue'
+        publishedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+          description: Hai giờ sau publishedAt.
+        status:
+          type: string
+          enum:
+            - active
+            - expired
+            - deleted
+            - hidden
+          description: Chỉ chủ sở hữu thấy trạng thái này
+    CreateMomentResponse:
+      type: object
+      required:
+        - checkin
+        - moment
+      properties:
+        checkin:
+          $ref: '#/components/schemas/Checkin'
+        moment:
+          $ref: '#/components/schemas/MyMoment'
+      description: checkin là check-in mới hoặc check-in hiện có ở cùng địa điểm.
+    Card:
+      type: object
+      description: Moment ẩn danh; không có danh tính tác giả hoặc tọa độ chi tiết.
+      required:
+        - id
+        - photoUrl
+        - venue
+        - publishedAt
+        - expiresAt
+      properties:
+        id:
+          type: string
+        photoUrl:
+          type: string
+          format: uri
+        caption:
+          type: string
+          maxLength: 50
+          nullable: true
+        venue:
+          $ref: '#/components/schemas/Venue'
+        publishedAt:
+          type: string
+          format: date-time
+        expiresAt:
+          type: string
+          format: date-time
+    DeckPage:
+      type: object
+      required:
+        - data
+        - page
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Card'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    ReactionResult:
+      type: object
+      required:
+        - type
+        - matched
+        - actionApplied
+        - currentState
+      properties:
+        type:
+          type: string
+          enum:
+            - like
+            - pass
+        matched:
+          type: boolean
+        match:
+          oneOf:
+            - $ref: '#/components/schemas/Match'
+            - type: object
+              nullable: true
+              enum:
+                - 
+        actionApplied:
+          type: boolean
+          description: true nếu request này tạo reaction mới; false nếu không thay đổi trạng thái.
+        currentState:
+          type: string
+          enum:
+            - liked
+            - passed
+            - reported
+            - matched
+          description: Trạng thái tương tác đã ghi nhận của Moment.
+    ReportReceipt:
+      type: object
+      required:
+        - status
+      properties:
+        status:
+          type: string
+          enum:
+            - received
+      example:
+        status: received
+    Match:
+      type: object
+      required:
+        - id
+        - partner
+        - createdAt
+      properties:
+        id:
+          type: string
+        partner:
+          $ref: '#/components/schemas/Partner'
+        createdAt:
+          type: string
+          format: date-time
+        lastMessage:
+          oneOf:
+            - $ref: '#/components/schemas/Message'
+            - type: object
+              nullable: true
+              enum:
+                - 
+    MatchPage:
+      type: object
+      required:
+        - data
+        - page
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Match'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    Message:
+      type: object
+      description: Tin nhắn văn bản không có giới hạn ký tự tối đa theo nghiệp vụ.
+      required:
+        - id
+        - matchId
+        - senderId
+        - content
+        - createdAt
+      properties:
+        id:
+          type: string
+        matchId:
+          type: string
+        senderId:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      example:
+        id: msg_01HZX7D1
+        matchId: mat_01HZX6C7
+        senderId: usr_01HZW9Q2
+        content: Xin chào!
+        createdAt: '2026-11-18T09:55:03Z'
+    MessagePage:
+      type: object
+      required:
+        - data
+        - page
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Message'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    Notification:
+      type: object
+      required:
+        - id
+        - type
+        - createdAt
+        - text
+      properties:
+        id:
+          type: string
+        type:
+          type: string
+          enum:
+            - like
+            - match
+            - message
+            - new_moment
+            - moment_expired
+        text:
+          type: string
+          description: Không chứa danh tính trước Match
+        createdAt:
+          type: string
+          format: date-time
+        readAt:
+          type: string
+          format: date-time
+          nullable: true
+    NotificationPage:
+      type: object
+      required:
+        - data
+        - page
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Notification'
+        page:
+          $ref: '#/components/schemas/PageInfo'
+    NotificationTarget:
+      description: Dữ liệu điều hướng theo loại thông báo.
+      oneOf:
+        - type: object
+          required:
+            - kind
+            - moment
+          additionalProperties: false
+          properties:
+            kind:
+              type: string
+              enum:
+                - moment
+            moment:
+              $ref: '#/components/schemas/Card'
+        - type: object
+          required:
+            - kind
+            - matchId
+          additionalProperties: false
+          properties:
+            kind:
+              type: string
+              enum:
+                - chat
+            matchId:
+              type: string
+              minLength: 1
+        - type: object
+          required:
+            - kind
+          additionalProperties: false
+          properties:
+            kind:
+              type: string
+              enum:
+                - discovery
+        - type: object
+          required:
+            - kind
+            - expiredMoment
+          additionalProperties: false
+          properties:
+            kind:
+              type: string
+              enum:
+                - expired_moment
+            expiredMoment:
+              $ref: '#/components/schemas/MyMoment'
+        - type: object
+          required:
+            - kind
+          additionalProperties: false
+          properties:
+            kind:
+              type: string
+              enum:
+                - post_prompt
+    BlockReceipt:
+      type: object
+      required:
+        - id
+        - createdAt
+      properties:
+        id:
+          type: string
+        createdAt:
+          type: string
+          format: date-time

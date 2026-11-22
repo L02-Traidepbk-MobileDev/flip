@@ -1,0 +1,23 @@
+# Local environment variables
+.env
+.env.*
+!.env.example
+
+# Dependencies and generated output
+node_modules/
+*.log
+*.tsbuildinfo
+
+# Signing keys and local IDE files
+*.pem
+*.key
+*.pfx
+*.p12
+*.jks
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Local backup of the original standalone frontend repository
+/.frontend-git-backup/
